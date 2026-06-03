@@ -1,0 +1,231 @@
+Date: 2026-06-03
+
+=============================================================================
+PROCESS ENGINEER MOD — CONTEXT & PROGRESS LOG
+=============================================================================
+
+## MACHINES
+
+Factorio headless server: Mac Mini (frankstation.org / 192.168.1.70), port 34197/udp
+Development machine: MacBook Air (francisbrain4)
+GitHub repo: https://github.com/fgillet4/process-engineer
+
+## DEVELOPMENT WORKFLOW
+
+### Setup (MacBook Air — one time)
+1. Clone the repo:
+     git clone git@github.com:fgillet4/process-engineer.git ~/process-engineer
+
+2. Symlink into Factorio's mods folder:
+     ln -s ~/process-engineer \
+       ~/Library/Application\ Support/factorio/mods/process-engineer_0.1.0
+
+3. Launch Factorio — mod will be live-linked, no copy needed.
+
+### Daily dev loop (MacBook Air)
+- Edit files in ~/process-engineer/
+- Test in Factorio:
+    - F5 to reload control.lua (runtime changes)
+    - Full game restart for any data.lua / prototypes/ change
+    - /c in console to run arbitrary Lua
+    - tail -f ~/Library/Application\ Support/factorio/factorio-current.log
+- Commit and push:
+    git add -A && git commit -m "your message" && git push
+
+### Deploying to headless server (Mac Mini)
+SSH in and pull:
+    ssh francisgillet@192.168.1.70
+    cd ~/franks_factorio/mods/process-engineer_0.1.0
+    git pull
+    cd ~/franks_factorio
+    docker compose restart factorio
+
+Check server logs after restart:
+    docker compose logs -f factorio
+
+### Sharing this context file between machines
+The context file lives in the repo, so it travels with git:
+    git pull   — gets latest context on any machine
+    git add context_2026-06-03.txt && git commit && git push   — update it
+
+=============================================================================
+## SERVER SETUP (Mac Mini — COMPLETE)
+=============================================================================
+
+- Factorio 2.0.76 headless Linux binary, running in Docker (OrbStack)
+- --platform=linux/amd64 (QEMU emulation on Apple Silicon)
+- Port: 34197/udp, LAN-visible at 192.168.1.70:34197
+- LAN only (no public listing, no Cloudflare — Cloudflare Tunnel is HTTP only, won't proxy UDP)
+- Mods volume-mounted: ~/franks_factorio/mods/ → /opt/factorio/mods inside container
+- Save: saves/my-save.zip, loaded with --start-server-load-latest
+- restart: unless-stopped — survives OrbStack restarts
+
+Files on Mac Mini:
+    ~/franks_factorio/
+        Dockerfile
+        docker-compose.yml
+        server-settings.json
+        init-save.sh
+        saves/my-save.zip
+        mods/process-engineer_0.1.0/   ← git repo lives here
+
+For friend to connect from outside LAN:
+    Best option: Tailscale (install on Mac Mini + friend's machine, connect by Tailscale IP)
+    Alternative: port forward UDP 34197 on home router → 192.168.1.70
+
+=============================================================================
+## PROCESS ENGINEER MOD — v0.1.0 STATE
+=============================================================================
+
+A Factorio mod modelling real chemical engineering unit operations.
+Target: gamified HYSYS/Aspen — accurate stoichiometry, thermodynamics,
+and VLE running in Lua inside the game engine.
+
+### Thermodynamics library (lib/thermodynamics.lua)
+- Shomate equation Cp(T) for 11 species (H2, O2, N2, CH4, CO, CO2, H2O, NH3, C2H4, C2H6, CH3OH)
+- Numerical enthalpy integration (10-point Gauss-Legendre quadrature)
+- ΔH°rxn via Hess's law from Hf° data
+- K_eq(T) correlations for SMR, WGS, Haber-Bosch, methanol synthesis
+- WGS equilibrium conversion solver (analytical: x = √K / (1+√K))
+- SMR extent-of-reaction estimate as function of T and P
+
+### VLE library (lib/vle.lua)
+- Antoine equation vapor pressure (P_sat) for 10 species
+- Raoult's Law K-values (low pressure)
+- Peng-Robinson EOS: cubic Z solve (Cardano/trigonometric), fugacity coefficients
+- K-values from PR fugacity: K_i = φ_i^L / φ_i^V
+- Rachford-Rice flash: bisection solver, returns V fraction + x/y compositions
+- Auto-selects Raoult vs PR based on pressure (>10 bar → PR)
+- Bubble point and dew point temperature solvers (bisection)
+
+### Chemical species (12 fluids)
+H2, N2, CH4, CO, CO2, NH3, syngas (H2/CO), C2H6, C2H4, CH3OH,
+H2-compressed, N2-compressed
+All with correct gas_temperature thresholds (Factorio phase logic)
+
+### Unit operations (9 machines)
+  1. Steam Methane Reformer (SMR)     — 4×4, 2.5 MW, Ni/Al2O3
+  2. Water-Gas Shift Reactor (WGS)   — 3×3, HT + LT stage recipes
+  3. Haber-Bosch Reactor             — 4×4, 300 kW, promoted Fe catalyst
+  4. Gas Compressor                  — multi-stage, 750 kW
+  5. Shell-and-Tube Heat Exchanger   — counter-current, waste heat recovery
+  6. Flash Separator                 — VLE drum, Rachford-Rice scripted
+  7. Steam Cracker                   — 4×4, 2 MW, ethane→ethylene
+  8. Methanol Reactor                — Cu/ZnO/Al2O3, 250°C, 50-100 bar
+  9. PSA / Syngas Splitter           — H2/CO separation
+
+### Reactions implemented
+- Steam methane reforming: CH4 + H2O → CO + 3H2 (S:C=3, 850°C)
+- Syngas cooling / waste heat recovery
+- Syngas PSA splitting (H2 + CO product streams)
+- WGS high-temp (Fe/Cr, 350°C, ~75% conversion)
+- WGS low-temp (Cu/Zn, 220°C, ~96% conversion)
+- H2 compression, N2 compression
+- Haber-Bosch: N2 + 3H2 → 2NH3 (modelled recycle loop, 22% eff. conversion)
+- Ethane steam cracking: C2H6 → C2H4 + H2 (65% conv, 80% selectivity)
+- Methanol synthesis: CO + 2H2 → CH3OH (90% eff. conversion)
+- Urea synthesis: 2NH3 + CO2 → CO(NH2)2 + H2O
+
+### Technology tree (5 tiers)
+  1. Steam Reforming (foundation)
+  2. Hydrogen Production (WGS + PSA)
+  3. Ammonia Synthesis (Haber-Bosch loop)
+  4a. Steam Cracking (C2 chemistry / plastics)
+  4b. Methanol Chemistry
+  5. Fertilizer Chemistry (Urea — end game)
+
+### Runtime scripting (control.lua)
+- VLE flash separator: recalculates every 2s, stores V/L split in storage
+- GUI panels on machine open:
+    WGS: shows K_eq(T), equilibrium conversion %, ΔH°rxn, regime
+    SMR: shows ΔH°rxn, extent of reaction, temperature warnings
+    Haber-Bosch: shows K_eq, est. NH3 mol%, operating condition advice
+- Le Chatelier notes and catalyst info in GUI
+
+### Graphics
+- Currently using base game sprites (placeholder via data-updates.lua)
+- data-updates.lua copies assembling machine animations at load time
+- Custom sprites needed — see plans below
+
+### Locale
+- Full English locale for all fluids, items, entities, recipes, technologies
+- Chemical formulas in display names (H₂, NH₃, etc.)
+
+=============================================================================
+## KNOWN ISSUES / TODO
+=============================================================================
+
+### Bugs to fix
+1. RECIPE DUPLICATE NAMES
+   - Machine item recipes and reaction recipes share some names (e.g. "pe-smr")
+   - Fix: rename machine item recipes to e.g. "pe-smr-machine"
+
+2. MOD NOT YET TESTED in Factorio client
+   - Need to load and check for prototype/Lua errors
+   - Check fluid box positions, entity sizes, recipe validity
+
+### Short term features
+3. ADD NITROGEN SOURCE
+   - N2 has no production recipe
+   - Add ASU (Air Separation Unit): compresses air → O2 + N2 via cryogenic distillation
+   - Or simplified: electrolyser-style N2 extraction
+
+4. ADD METHANE SOURCE
+   - CH4 has no production recipe
+   - Options: natural gas well (like oil pumpjack), coal gasification,
+     or anaerobic digestion from biomass
+
+5. CUSTOM ART
+   - Style: Factorio top-down oblique dimetric (NOT isometric)
+     ~60° elevation angle, 32×32px standard, 64×64 high-res (@2x)
+   - Generate with AI or commission from Factorio Discord #mod-art
+   - Priority: SMR (big fired furnace), Haber-Bosch (pressure vessel),
+     fluid icons for H2/N2/NH3/syngas
+
+### Medium term
+6. PRESSURE SYSTEM EXPANSION
+   - Current: "compressed" fluid types simulate pressure (coarse)
+   - Better: circuit signal-based pressure tracking per tank
+
+7. DISTILLATION COLUMN
+   - Multi-stage separation, port stage-by-stage tray calc from
+     Franks_Chemical_Simulator_Tauri DistillationColumnProcessor to Lua
+   - Tall 2×6 or 2×8 entity, multiple fluid outputs
+
+8. HEAT INTEGRATION / PINCH ANALYSIS
+   - Track stream enthalpies, display composite curve in custom GUI
+   - Alert when heat recovery opportunity exists
+   - Unique — no existing Factorio mod does pinch analysis
+
+9. MORE REACTIONS
+   - Sulfuric acid: S + O2 → SO2 → SO3 → H2SO4 (contact process)
+   - Nitric acid: NH3 + O2 → NO → NO2 → HNO3 (Ostwald process)
+   - Ethylene oxide: C2H4 + O2 → C2H4O (Ag catalyst)
+   - Polyethylene: C2H4 → (C2H4)n (Ziegler-Natta)
+
+10. INTEGRATION WITH Franks_Chemical_Simulator_Tauri
+    - Bridge: export stream data from Factorio via RCON → pipe to simulator
+      → get rigorous results back → inject via RCON commands
+    - Or: use simulator to generate recipe tables (conversion vs T/P)
+      baked into mod at build time
+
+### Long term
+11. PUBLISH TO MOD PORTAL
+    - Needs: custom art, basic testing, changelog
+
+12. MULTIPLAYER BALANCE
+    - Server running — test with friends via Tailscale
+
+=============================================================================
+## REFERENCE RESOURCES
+=============================================================================
+
+- Factorio Lua API:    https://lua-api.factorio.com/
+- Factorio mod wiki:   https://wiki.factorio.com/Tutorial:Modding_tutorial/Gangsir
+- Caleb Bell Python libs: github.com/CalebBell/ (thermo, fluids, chemicals, ht)
+- PyAndon reference mods: ~/franks_factorio/modding_reference_code/
+    pypetroleumhandling — complex fluid processing reference
+    pyindustry — entity/technology tree patterns
+- Franks_Chemical_Simulator_Tauri — PR EOS + Rachford-Rice in Rust/WASM,
+    DistillationColumnProcessor has stage-by-stage tray calc
+- NIST WebBook — Shomate coefficients, Antoine data
