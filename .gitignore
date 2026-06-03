@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Factorio mod zips (built releases)
+*.zip
+
+# Factorio log/temp files
+factorio-current.log
+factorio-prev.log
+
+# Generated / large binaries
+*.tar.xz

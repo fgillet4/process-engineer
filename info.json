@@ -1,0 +1,9 @@
+{
+  "name": "process-engineer",
+  "version": "0.1.0",
+  "title": "Process Engineer",
+  "author": "Frank",
+  "description": "Real chemical engineering unit operations with accurate stoichiometry, temperature-dependent reactions, and energy balances. Designed by a chemical engineer for process simulation in Factorio.",
+  "factorio_version": "2.0",
+  "dependencies": ["base"]
+}
